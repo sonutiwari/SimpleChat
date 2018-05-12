@@ -15,6 +15,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "418504443844-76r6dd4uauauhfenbdkvkuq1814p2r6u.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "in.co.ikai.simplechat",
+            "certificate_hash": "5e2ab892c4d38351931010833aa6ced2b9492ae5"
+          }
+        },
+        {
           "client_id": "418504443844-ks7h5blqtamrrc4eums5j56639tbd62s.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {

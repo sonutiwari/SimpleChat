@@ -15,6 +15,8 @@
  */
 package in.co.ikai.simplechat;
 
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
@@ -33,6 +35,7 @@ import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import com.firebase.ui.auth.AuthUI;
+import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.ChildEventListener;
@@ -40,6 +43,9 @@ import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -67,12 +73,15 @@ public class MainActivity extends AppCompatActivity {
     private Button mSendButton;
 
     private FirebaseDatabase mFirebaseDatabase;
+    private StorageReference mChatPhotosStorageReference;
+    private FirebaseStorage mFirebaseStorage;
     private DatabaseReference mDatabaseReference;
     private ChildEventListener mChildEventListener;
 
 
     private String mUsername;
     private static final int RC_SIGN_IN = 1;
+    private static final int RC_PHOTO_PICKER = 2;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -83,10 +92,12 @@ public class MainActivity extends AppCompatActivity {
 
         // Getting reference of Firebase authentication
         mFirebaseAuth = FirebaseAuth.getInstance();
+        mFirebaseStorage = FirebaseStorage.getInstance();
 
         // Getting reference of database.
         mFirebaseDatabase = FirebaseDatabase.getInstance();
         mDatabaseReference = mFirebaseDatabase.getReference().child("messages");
+        mChatPhotosStorageReference = mFirebaseStorage.getReference().child("chat_photos");
 
 
         // Initialize references to views
@@ -109,6 +120,17 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View view) {
                 // TODO: Fire an intent to show an image picker
+                // ImagePickerButton shows an image picker to upload a image for a message
+                mPhotoPickerButton.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                        intent.setType("image/jpeg");
+                        intent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+                        startActivityForResult(Intent.createChooser(intent
+                                , "Complete action using"), RC_PHOTO_PICKER);
+                    }
+                });
             }
         });
 
@@ -151,36 +173,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        mChildEventListener = new ChildEventListener() {
-            @Override
-            public void onChildAdded(DataSnapshot dataSnapshot, String s) {
-                FriendlyMessage friendlyMessage = dataSnapshot.getValue(FriendlyMessage.class);
-                mMessageAdapter.add(friendlyMessage);
-
-            }
-
-            @Override
-            public void onChildChanged(DataSnapshot dataSnapshot, String s) {
-
-            }
-
-            @Override
-            public void onChildRemoved(DataSnapshot dataSnapshot) {
-
-            }
-
-            @Override
-            public void onChildMoved(DataSnapshot dataSnapshot, String s) {
-
-            }
-
-            @Override
-            public void onCancelled(DatabaseError databaseError) {
-
-            }
-        };
-        mDatabaseReference.addChildEventListener(mChildEventListener);
-
 
         mAuthStateListener = new FirebaseAuth.AuthStateListener() {
             @Override
@@ -188,11 +180,11 @@ public class MainActivity extends AppCompatActivity {
                 FirebaseUser user = firebaseAuth.getCurrentUser();
                 if (user != null) {
                     // User is signed in
-                    Toast.makeText(MainActivity.this
-                            , "You're now signed in. Welcome to SimpleChat."
-                            , Toast.LENGTH_SHORT).show();
+                    onSignedInInitialize(user.getDisplayName());
                 } else {
-                    // User is signed out
+                    // User is signed out.
+                    onSignedOutCleanUp();
+                    //  Take him to login screen
                     startActivityForResult(
                             AuthUI.getInstance()
                                     .createSignInIntentBuilder()
@@ -209,6 +201,102 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        // Checking if it is from sign in flow.
+        if (requestCode == RC_SIGN_IN){
+            if (resultCode == RESULT_CANCELED){
+                finish();
+            }
+        } else if (requestCode == RC_PHOTO_PICKER && resultCode == RESULT_OK){
+            Uri selectedImageUri = data.getData();
+            StorageReference photoRef =
+                    mChatPhotosStorageReference
+                            .child(selectedImageUri.getLastPathSegment());
+            UploadTask uploadTask = photoRef.putFile(selectedImageUri);
+            uploadTask.addOnSuccessListener(new OnSuccessListener<UploadTask.TaskSnapshot>() {
+                @Override
+                public void onSuccess(UploadTask.TaskSnapshot taskSnapshot) {
+                    Toast.makeText(MainActivity.this
+                            , "uploaded", Toast.LENGTH_SHORT).show();
+                    Uri downloadUri = taskSnapshot.getDownloadUrl();
+
+                    // Set the download URL to the message box, so that the user
+                    // can send it to the database.
+                    FriendlyMessage friendlyMessage = new FriendlyMessage(null
+                            , mUsername, downloadUri.toString());
+                    mDatabaseReference.push().setValue(friendlyMessage);
+                }
+            });
+        }
+
+    }
+
+
+    // Cleaning data once user signed out.
+    private void onSignedOutCleanUp() {
+        mUsername = ANONYMOUS;
+        mMessageAdapter.clear();
+
+        // Detach database listener now.
+        detachDatabaseReadListener();
+    }
+
+    private void detachDatabaseReadListener() {
+        if (mChildEventListener != null){
+            mDatabaseReference.removeEventListener(mChildEventListener);
+            mChildEventListener = null;
+        }
+    }
+
+    // Initializing data so that it is available once user signed in.
+    private void onSignedInInitialize(String displayName) {
+        mUsername = displayName;
+
+        // Attaching child event listener.
+        attachDatabaseReadListener();
+    }
+
+    // Attach database read listener.
+    private void attachDatabaseReadListener(){
+
+        // Checking if event listener is detached.
+        if (mChildEventListener == null) {
+            // Reading the data base once authenticated.
+            mChildEventListener = new ChildEventListener() {
+                @Override
+                public void onChildAdded(DataSnapshot dataSnapshot, String s) {
+                    FriendlyMessage friendlyMessage = dataSnapshot.getValue(FriendlyMessage.class);
+                    mMessageAdapter.add(friendlyMessage);
+
+                }
+
+                @Override
+                public void onChildChanged(DataSnapshot dataSnapshot, String s) {
+
+                }
+
+                @Override
+                public void onChildRemoved(DataSnapshot dataSnapshot) {
+
+                }
+
+                @Override
+                public void onChildMoved(DataSnapshot dataSnapshot, String s) {
+
+                }
+
+                @Override
+                public void onCancelled(DatabaseError databaseError) {
+
+                }
+            };
+            mDatabaseReference.addChildEventListener(mChildEventListener);
+        }
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         mFirebaseAuth.addAuthStateListener(mAuthStateListener);
@@ -220,6 +308,8 @@ public class MainActivity extends AppCompatActivity {
         if (mAuthStateListener != null) {
             mFirebaseAuth.removeAuthStateListener(mAuthStateListener);
         }
+        detachDatabaseReadListener();
+        mMessageAdapter.clear();
     }
 
 
@@ -232,6 +322,12 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        return super.onOptionsItemSelected(item);
+        switch (item.getItemId()) {
+            case R.id.sign_out_menu:
+                AuthUI.getInstance().signOut(this);
+                return true;
+                default:
+                    return super.onOptionsItemSelected(item);
+        }
     }
 }
