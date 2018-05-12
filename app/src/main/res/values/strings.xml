@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">SimpleChat</string>
+    <string name="facebook_app_id">1545278588927686</string>
+    <string name="fb_login_protocol_scheme">fb1545278588927686</string>
+    <string name="sign_out">Sign Out</string>
+    <string name="send_button_label">Send</string>
+</resources>
